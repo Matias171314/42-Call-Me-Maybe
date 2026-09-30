@@ -1,6 +1,6 @@
-import sys
-import json
 import argparse
+import json
+import sys
 from pathlib import Path
 
 from src import (
@@ -15,19 +15,31 @@ from src import (
 
 def parse_args() -> argparse.Namespace:
     """Parse command line arguments."""
-    parser = argparse.ArgumentParser(description="Call Me Maybe")
+    parser = argparse.ArgumentParser(
+        description="Call Me Maybe - Function Calling Engine"
+    )
+
+    parser.add_argument(
+        "--functions_definition",
+        type=str,
+        default="data/input/functions_definition.json",
+        help="Path to the JSON file containing function definitions.",
+    )
+
     parser.add_argument(
         "--input",
         type=str,
-        default="data/input",
-        help="Directory containing the input JSON files."
+        default="data/input/function_calling_tests.json",
+        help="Path to the JSON file containing input prompts.",
     )
+
     parser.add_argument(
         "--output",
         type=str,
         default="data/output/function_calling_results.json",
-        help="Path to save the generated JSON results."
+        help="Path where the generated results will be written.",
     )
+
     return parser.parse_args()
 
 
@@ -38,18 +50,17 @@ def main() -> None:
     print("[INFO] Hello from 42-call-me-maybe!")
     print("[INFO] Starting Program...")
 
-    input_dir = Path(args.input)
+    functions_file = Path(args.functions_definition)
+    input_file = Path(args.input)
     output_file = Path(args.output)
 
-    print(f"[INFO] Validating files in: {input_dir}")
-    print(f"[INFO] Output Path: {output_file}")
-
-    functions_path: str = str(input_dir / "functions_definition.json")
-    prompts_path: str = str(input_dir / "function_calling_tests.json")
+    print(f"[INFO] Functions definition: {functions_file}")
+    print(f"[INFO] Input file: {input_file}")
+    print(f"[INFO] Output file: {output_file}")
 
     try:
-        functions = get_function_definitions(functions_path)
-        prompts = get_prompts(prompts_path)
+        functions = get_function_definitions(str(functions_file))
+        prompts = get_prompts(str(input_file))
         print(
             f"[SUCCESS] Loaded {len(functions)} functions & "
             f"{len(prompts)} prompts."
@@ -64,6 +75,7 @@ def main() -> None:
     try:
         print("[INFO] Loading LLM Engine...")
         llm = Model()
+
     except Exception as e:
         print(
             f"\033[0;31m[CRITICAL] Error loading model. Details: {e}\033[0m",
@@ -71,9 +83,17 @@ def main() -> None:
         )
         sys.exit(1)
 
-    print("[INFO] Processing prompts. This might take a while...")
-    processor = PromptProcessor(prompts, functions, llm)
-    output = processor.process()
+    try:
+        print("[INFO] Processing prompts. This might take a while...")
+        processor = PromptProcessor(prompts, functions, llm)
+        output = processor.process()
+    
+    except Exception as e:
+        print(
+            f"[CRITICAL] Error while processing prompts: {e}",
+            file=sys.stderr,
+            )
+        sys.exit(1)
 
     try:
         output_file.parent.mkdir(parents=True, exist_ok=True)
