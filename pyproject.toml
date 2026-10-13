@@ -23,3 +23,6 @@ members = [
 
 [tool.uv.sources]
 llm-sdk = { workspace = true }
+
+[tool.mypy]
+exclude = ["^llm_sdk/", "^\\.venv/"]
