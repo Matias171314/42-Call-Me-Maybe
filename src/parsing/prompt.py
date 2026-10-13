@@ -1,6 +1,7 @@
 import json
-from typing import List
-from pydantic import BaseModel, ValidationError
+from typing import Any, List
+
+from pydantic import BaseModel, ValidationError, ConfigDict
 
 
 class PromptError(Exception):
@@ -15,63 +16,72 @@ class Prompt(BaseModel):
     Attributes:
         prompt (str): The natural language query or instruction.
     """
+
+    model_config = ConfigDict(extra="forbid", strict=True)
     prompt: str
 
 
 def get_prompts(file_path: str) -> List[Prompt]:
     """
-    Reads and validates prompt instructions from a JSON file.
+    Read and validate prompts from a JSON file.
 
     Args:
-        file_path (str): The path to the JSON file containing prompts.
+        file_path (str): Path to the JSON file containing prompts.
 
     Returns:
-        List[Prompt]: List of validated Prompt.
+        List[Prompt]: Validated prompt entries.
 
     Raises:
-        PromptError: If the file is not found, contains invalid JSON,
-            lacks read permissions, is not a list, or schema fails.
+        PromptError: If the file cannot be read, contains invalid JSON,
+            has an invalid top-level structure, or contains prompt entries
+            that do not match the expected schema.
     """
+
     try:
-        with open(file_path, 'r') as f:
-            data_prompts = json.load(f)
-    except FileNotFoundError:
+        with open(file_path, "r", encoding="utf-8") as file:
+            data_prompts: Any = json.load(file)
+
+    except FileNotFoundError as error:
         raise PromptError(
             f"File Not Found: The prompts file at '{file_path}' "
             "does not exist."
-            )
-    except json.JSONDecodeError as e:
+        ) from error
+
+    except json.JSONDecodeError as error:
         raise PromptError(
             f"JSON Decode Error: The file '{file_path}' contains "
-            f"invalid JSON data. Details: {e}"
-            )
-    except PermissionError:
+            f"invalid JSON data. Details: {error}"
+        ) from error
+
+    except PermissionError as error:
         raise PromptError(
             "Permission Denied: Lacking read permissions for "
             f"the file '{file_path}'."
-            )
-    except Exception as e:
+        ) from error
+
+    except (OSError, UnicodeError) as error:
         raise PromptError(
-            f"Unexpected Error: An issue occurred while reading "
-            f"'{file_path}'. Details: {e}"
-            )
+            f"File Error: Could not read '{file_path}'. "
+            f"Details: {error}"
+        ) from error
 
     if not isinstance(data_prompts, list):
         raise PromptError(
             "Invalid Format: The top-level JSON structure must be a list "
             "of prompts."
-            )
+        )
 
     validated_prompts: List[Prompt] = []
 
-    for item in data_prompts:
+    for index, item in enumerate(data_prompts):
         try:
-            valid_prompt = Prompt(prompt=item["prompt"])
+            valid_prompt = Prompt.model_validate(item)
             validated_prompts.append(valid_prompt)
-        except ValidationError as e:
-            fail_prompt = item.get("prompt")
+
+        except ValidationError as error:
             raise PromptError(
-                f"Validation Error: The prompt '{fail_prompt}' does not "
-                f"match the expected schema.\nDetails: {e}"
-                )
+                f"Validation Error: Prompt at index {index} does not "
+                f"match the expected schema.\nDetails: {error}"
+            ) from error
+
     return validated_prompts
