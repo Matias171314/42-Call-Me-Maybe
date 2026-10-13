@@ -1,78 +1,37 @@
-from typing import Generator
-from src import Small_LLM_Model
+"""Validated adapter using only the SDK public inference API."""
+from typing import Any
+
+from pydantic import BaseModel, ConfigDict, Field, PrivateAttr
 
 
-class Model(Small_LLM_Model):
-    """
-    Wrapper for the Small_LLM_Model SDK providing text generation methods.
+class Model(BaseModel):
+    """Own the SDK instance and cache token decoding."""
 
-    This class handles the tokenization, prompt formatting, and logit
-    processing required to interact with the underlying neural network.
-    """
-    def _build_prompt(self, message: str, previous: str) -> str:
-        """Helper to construct the prompt with chat templates."""
-        return (
-            f"<|im_start|>user\n{message}<|im_end|>\n"
-            f"<|im_start|>assistant\n<think>\n\n</think>\n\n{previous}"
+    model_config = ConfigDict(arbitrary_types_allowed=True)
+    sdk: Any = Field(exclude=True)
+    _decoded: dict[int, str] = PrivateAttr(default_factory=dict)
+
+    def __init__(self, **kwargs: Any) -> None:
+        """Load the required model lazily after input validation."""
+        from llm_sdk import Small_LLM_Model  # type: ignore[attr-defined]
+        super().__init__(sdk=Small_LLM_Model(**kwargs))
+
+    def get_logits(self, prompt_message: str,
+                   previous_tokens: str) -> list[float]:
+        """Return next-token logits using the non-thinking chat format."""
+        prompt = (
+            "<|im_start|>user\n" + prompt_message
+            + "<|im_end|>\n<|im_start|>assistant\n"
+            + "<think>\n\n</think>\n\n" + previous_tokens
         )
+        ids = self.sdk.encode(prompt).tolist()[0]
+        return list(self.sdk.get_logits_from_input_ids(ids))
 
-    def predict_token(
-        self,
-        prompt_message: str,
-        previous_tokens: str = '',
-        skip: int = 0
-    ) -> str:
-        """
-        Gets the next most probable token for a given sequence.
-
-        Args:
-            prompt_message (str): The natural language query.
-            previous_tokens (str, optional): Tokens already generated.
-                Defaults to ''.
-            skip (int, optional): The rank of the token to return (0 for the
-                best, 1 for the second best, etc.). Defaults to 0.
-
-        Returns:
-            str: The decoded text of the selected token.
-        """
-        prompt = self._build_prompt(prompt_message, previous_tokens)
-        tensors = self.encode(prompt)
-
-        probabilities = self.get_logits_from_input_ids(tensors.tolist()[0])
-        sorted_tokens = sorted(probabilities, reverse=True)
-        token_id = probabilities.index(sorted_tokens[skip])
-
-        return self.decode(token_id)
-
-    def predict_multiple_tokens(
-        self,
-        prompt_message: str,
-        previous_tokens: str = '',
-        skip: int = 0
-    ) -> Generator[str, None, None]:
-        """
-        Yields alternative token predictions for a single position.
-
-        Useful for constrained decoding (e.g., rejecting invalid tokens
-        and requesting the next most probable one).
-
-        Args:
-            prompt_message (str): The natural language query.
-            previous_tokens (str, optional): Tokens already generated.
-                Defaults to ''.
-            skip (int, optional): The starting rank of the token to yield.
-                Defaults to 0.
-
-        Yields:
-            Generator[str, None, None]: A generator that infinitely yields
-                the next best token string.
-        """
-        prompt = self._build_prompt(prompt_message, previous_tokens)
-        tensors = self.encode(prompt)
-
-        probabilities = self.get_logits_from_input_ids(tensors.tolist()[0])
-        sorted_tokens = sorted(probabilities, reverse=True)
-        while True:
-            token_id = probabilities.index(sorted_tokens[skip])
-            yield self.decode(token_id)
-            skip += 1
+    def decode_token(self, token_id: int) -> str:
+        """Decode a token through a bounded shared cache."""
+        if token_id not in self._decoded:
+            value = self.sdk.decode([token_id])
+            if not isinstance(value, str):
+                raise TypeError("SDK decode must return text")
+            self._decoded[token_id] = value
+        return self._decoded[token_id]

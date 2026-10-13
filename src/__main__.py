@@ -1,19 +1,25 @@
 import argparse
 import json
 import sys
+import os
+import time
 from pathlib import Path
 
-from src import (
+from src.model_engine import Model
+from src.function_calling_engine import FunctionCallingEngine
+
+from src.parsing.function_definition import (
     FunctionDefinitionError,
-    Model,
-    PromptError,
-    PromptProcessor,
     get_function_definitions,
+)
+
+from src.parsing.prompt import (
+    PromptError,
     get_prompts,
 )
 
 
-def parse_args() -> argparse.Namespace:
+def get_arguments() -> argparse.Namespace:
     """Parse command line arguments."""
     parser = argparse.ArgumentParser(
         description="Call Me Maybe - Function Calling Engine"
@@ -45,7 +51,10 @@ def parse_args() -> argparse.Namespace:
 
 def main() -> None:
     """Main execution flow for the prompt processor."""
-    args: argparse.Namespace = parse_args()
+    args: argparse.Namespace = get_arguments()
+    os.environ.setdefault("OMP_NUM_THREADS", "4")
+    os.environ.setdefault("MKL_NUM_THREADS", "4")
+    started = time.perf_counter()
 
     print("[INFO] Hello from 42-call-me-maybe!")
     print("[INFO] Starting Program...")
@@ -85,9 +94,13 @@ def main() -> None:
 
     try:
         print("[INFO] Processing prompts. This might take a while...")
-        processor = PromptProcessor(prompts, functions, llm)
-        output = processor.process()
-    
+        engine = FunctionCallingEngine(
+            prompts,
+            functions,
+            llm,
+        )
+        output = engine.process()
+
     except Exception as e:
         print(
             f"[CRITICAL] Error while processing prompts: {e}",
@@ -97,11 +110,12 @@ def main() -> None:
 
     try:
         output_file.parent.mkdir(parents=True, exist_ok=True)
-        with output_file.open("w") as f:
-            json.dump(output, f, indent=4, ensure_ascii=False)
+        with output_file.open("w", encoding="utf-8") as f:
+            json.dump(output, f, indent=4, ensure_ascii=False, allow_nan=False)
         print(f"[SUCCESS] Results saved successfully in: {output_file}")
+        print(f"[INFO] Total time: {time.perf_counter() - started:.2f}s")
         sys.exit(0)
-    except OSError as e:
+    except (OSError, ValueError, UnicodeError) as e:
         print(
             f"\033[0;31m[ERROR] Could not write to output. "
             f"Details: {e}\033[0m",
