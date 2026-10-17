@@ -24,18 +24,4 @@ lint-strict:
 	uv run flake8 . --extend-exclude=.venv,llm_sdk
 	uv run mypy . --strict
 
-help:
-	@printf '%s\n' \
-		'make install      Install project dependencies with uv' \
-		'make run          Process requests using the default paths' \
-		'make debug        Run the CLI under the Python debugger' \
-		'make lint         Check style and the required mypy flags' \
-		'make lint-strict  Check style and strict typing' \
-		'make clean        Remove application bytecode and mypy cache' \
-		'make clean-venv   Remove the virtual environment' \
-		'make help         Show these commands' \
-		'' \
-		'Custom paths: make run ARGS="--input prompts.json --output results.json"' \
-		'The same ARGS option is supported by make debug.'
-
-.PHONY: install run debug clean clean-venv lint lint-strict help
+.PHONY: install run debug clean clean-venv lint lint-strict
