@@ -1,7 +1,6 @@
 import argparse
 import json
 import sys
-import os
 import time
 from pathlib import Path
 
@@ -52,8 +51,6 @@ def get_arguments() -> argparse.Namespace:
 def main() -> None:
     """Main execution flow for the prompt processor."""
     args: argparse.Namespace = get_arguments()
-    os.environ.setdefault("OMP_NUM_THREADS", "4")
-    os.environ.setdefault("MKL_NUM_THREADS", "4")
     started = time.perf_counter()
 
     print("[INFO] Hello from 42-call-me-maybe!")
@@ -82,30 +79,15 @@ def main() -> None:
         sys.exit(1)
 
     try:
-        print("[INFO] Loading LLM Engine...")
-        llm = Model()
-
-    except Exception as e:
-        print(
-            f"\033[0;31m[CRITICAL] Error loading model. Details: {e}\033[0m",
-            file=sys.stderr
-        )
-        sys.exit(1)
-
-    try:
-        print("[INFO] Processing prompts. This might take a while...")
-        engine = FunctionCallingEngine(
-            prompts,
-            functions,
-            llm,
-        )
-        output = engine.process()
-
-    except Exception as e:
-        print(
-            f"[CRITICAL] Error while processing prompts: {e}",
-            file=sys.stderr,
-            )
+        if prompts:
+            print("[INFO] Loading LLM Engine...")
+            llm = Model()
+            engine = FunctionCallingEngine(prompts, functions, llm)
+            output = engine.process()
+        else:
+            output = []
+    except Exception as error:
+        print(f"[CRITICAL] Processing failed: {error}", file=sys.stderr)
         sys.exit(1)
 
     try:
