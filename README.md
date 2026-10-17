@@ -23,7 +23,6 @@ Run the commands from the project root.
 ```sh
 make install
 make run
-make help
 ```
 
 | Command | Purpose |
@@ -35,7 +34,6 @@ make help
 | `make lint-strict` | Run flake8 and strict mypy checks |
 | `make clean` | Remove application bytecode and the project mypy cache |
 | `make clean-venv` | Delete `.venv`; recreate it with `make install` |
-| `make help` | Display the available commands |
 
 Custom paths can be supplied directly:
 
@@ -66,8 +64,7 @@ prompt arrays produce `[]` without loading the LLM. Thread settings are left to
 the runtime.
 
 The lint commands exclude the virtual environment and the unchanged SDK.
-Cleanup is scoped to application caches. Test programs and grading tools are
-kept outside the submission repository.
+Cleanup is scoped to application caches.
 
 ## Input and output
 
@@ -100,8 +97,9 @@ The arguments are `2` and `3`; the program does not calculate `5`.
    to select a name. The decoder limits the answer to those names or `NO_MATCH`.
    A `NO_MATCH` result raises an error; there is no forced second selection.
 5. The engine requests each required argument separately, using its name, type,
-   function description and original request. Already generated arguments form
-   the partial JSON context for the next argument.
+   function description and original request. Literal extraction uses already
+   generated arguments as partial JSON context; derived strings use a JSON
+   object containing only the current argument.
 6. The decoder generates a value using the appropriate constraints. Python
    builds the keys and surrounding JSON structure, then `main` saves the results.
 
@@ -204,19 +202,36 @@ returning a truncated value. These are token limits, not character limits.
 
 ## Copying literals and deriving values
 
-For each string argument, the model chooses between two representations:
+For each string argument, the model first identifies its representation:
 
-- `copy`: select an exact fragment from the request. Candidate spans are built
+- `literal`: select an exact fragment from the request. Candidate spans are built
   using general whitespace and quotation boundaries and encoded as JSON strings.
   This preserves characters such as embedded quotes and backslashes.
-- `derive`: generate an input value implied by the request, using the same JSON
-  string constraints. This is needed when the required value is not given
-  literally, such as an expression or symbol described in words.
+- `expression`: generate a regular expression describing the requested matching
+  rule, rather than listing matching text from the example.
+- `symbol`: generate the actual character described by its name.
+
+This decision has its own prompt, separate from the instruction to preserve
+literal text. A matching rule may require notation that does not appear anywhere
+in the request; restricting it to copied fragments would prevent the correct
+value from being generated. The representation label is an internal decision
+and is not included in the output JSON.
+
+Expressions and symbols are generated in a JSON object containing only the
+current argument. The decoder still enforces valid JSON string syntax. Literal
+extraction instead uses the partial arguments object and preserves the exact
+selected input text.
+
+Literal extraction includes one further model choice between the extracted text,
+the characters in Python's `string.punctuation`, and a space. This lets the model
+interpret named punctuation even when it initially classified the value as
+literal text. The second choice cannot replace a name with another fragment of
+the request. There is no dictionary translating character names to symbols.
 
 The code does not choose a representation from the parameter name. The model
-makes that decision from the function definition and request. Copy constraints
-ensure that the selected text exists in the input; they cannot guarantee that
-the model chose the right fragment or representation.
+makes that decision from the function definition and request. Literal constraints
+preserve the chosen fragment, and the punctuation choice limits alternatives to
+individual characters. Neither constraint guarantees the correct meaning.
 
 ## Hardcoding and generalization
 
@@ -227,7 +242,7 @@ known prompts, would bypass the model's interpretation. Such patches can raise
 an example score while failing on changed wording, functions or argument roles.
 
 The implementation therefore has no answer tables, function-specific extraction
-branches, named-character replacement tables or post-generation text repairs.
+branches, named-character replacement tables or deterministic answer repairs.
 Function selection uses the LLM. The same extraction process applies to all
 parameter names, and literal candidates come from the current request.
 
@@ -242,36 +257,29 @@ substitutes the expected answer for a known example.
 
 ## Public example results and known limitations
 
-The measured result on the 11 public examples is **9/11 (81.8%)**, with all 11
-outputs parseable and schema-compliant. The selected function names are correct;
-the two failures concern argument meaning.
+The measured result on the 11 examples in `data/input` is **11/11 (100%)**.
+All outputs are parseable and schema-compliant. All selected function names
+are correct, and the generated arguments produce the expected public example
+results.
 
-| Request | Observed error | Required interpretation |
+| Request | Generated pattern | Generated replacement |
 | --- | --- | --- |
-| Replace all numbers with `NUMBERS` | Uses `34 I'm 233` as the pattern | A pattern matching digit sequences, such as `\d+` |
-| Replace all vowels with asterisks | Uses `asterisks` as the pattern and the source text as replacement | A vowel pattern and an asterisk replacement |
+| Replace all numbers with `NUMBERS` | `([0-9]+)` | `NUMBERS` |
+| Replace all vowels with asterisks | `([aeiouAEIOU])` | `*` |
 
-In the first case, the generated pattern matches one literal block instead of
-each number. In the second, arguments are confused and the pattern does not
-match the intended targets. Both calls remain valid JSON with string arguments;
-their behavior is wrong. Equivalent correct patterns need not use identical
-spelling, but they must express the requested operation.
+These patterns are generated by the model, not stored in the engine. Equivalent
+correct patterns need not use identical spelling, but they must express the
+requested operation.
 
 Constrained decoding can reject malformed JSON and incorrect primitive types.
 It cannot reject every semantically wrong string using those syntax rules alone.
 The model can misclassify an implied value as literal text or select the wrong
-fragment. The public semantic score remains below the 90% target; it is a known
-limitation, not a claim of complete accuracy or an intentional objective.
+fragment or punctuation character. Passing these 11 examples does not guarantee
+correct interpretation of new requests or function definitions.
 
-The public run took **101.72 seconds**, including model loading, on CPU with a
+The public run took **127.64 seconds**, including model loading, on CPU with a
 cached model and normal runtime thread settings. This is a measured execution,
 not a timing guarantee for other machines or uncached downloads.
-
-Development checks pass 21 regression tests, flake8 and strict mypy. They cover
-token rejection, shared prefixes, incomplete numbers, large integers, string
-escapes, exact literal copying and input errors. Test programs and grading
-artifacts stay outside the submission. The documented installation has also
-been checked in a fresh virtual environment.
 
 ## Resources
 
@@ -281,5 +289,4 @@ been checked in a fresh virtual environment.
 - [Qwen3-0.6B model card](https://huggingface.co/Qwen/Qwen3-0.6B)
 
 AI assistance was used to review requirements, compare implementations, refactor
-code and run external checks. The student should understand and be able to
-modify the decoding logic during the defense.
+code and check the public examples in `data/input`.
