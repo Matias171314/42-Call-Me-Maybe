@@ -1,20 +1,15 @@
-"""Validated adapter using only the SDK public inference API."""
-from typing import Any
-
-from pydantic import BaseModel, ConfigDict, Field, PrivateAttr
+"""Model adapter using only the SDK public inference API."""
 
 
-class Model(BaseModel):
+class Model:
     """Own the SDK instance and cache token decoding."""
 
-    model_config = ConfigDict(arbitrary_types_allowed=True)
-    sdk: Any = Field(exclude=True)
-    _decoded: dict[int, str] = PrivateAttr(default_factory=dict)
+    def __init__(self) -> None:
+        """Load the required model after input validation."""
+        from llm_sdk import Small_LLM_Model
 
-    def __init__(self, **kwargs: Any) -> None:
-        """Load the required model lazily after input validation."""
-        from llm_sdk import Small_LLM_Model  # type: ignore[attr-defined]
-        super().__init__(sdk=Small_LLM_Model(**kwargs))
+        self.sdk = Small_LLM_Model()
+        self._decoded: dict[int, str] = {}
 
     def get_logits(self, prompt_message: str,
                    previous_tokens: str) -> list[float]:
@@ -28,7 +23,7 @@ class Model(BaseModel):
         return list(self.sdk.get_logits_from_input_ids(ids))
 
     def decode_token(self, token_id: int) -> str:
-        """Decode a token through a bounded shared cache."""
+        """Decode a token once and reuse its cached text."""
         if token_id not in self._decoded:
             value = self.sdk.decode([token_id])
             if not isinstance(value, str):
