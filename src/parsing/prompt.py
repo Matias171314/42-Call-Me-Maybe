@@ -1,7 +1,7 @@
 import json
 from typing import Any, List
 
-from pydantic import BaseModel, ValidationError, ConfigDict
+from pydantic import BaseModel, ValidationError
 
 
 class PromptError(Exception):
@@ -17,7 +17,6 @@ class Prompt(BaseModel):
         prompt (str): The natural language query or instruction.
     """
 
-    model_config = ConfigDict(extra="forbid", strict=True)
     prompt: str
 
 

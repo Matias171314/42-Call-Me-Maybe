@@ -1,7 +1,7 @@
 import json
-from typing import Any, Dict, List, Literal
+from typing import Any, Dict, List
 
-from pydantic import BaseModel, ValidationError, ConfigDict, Field, TypeAdapter
+from pydantic import BaseModel, ValidationError
 
 
 class FunctionDefinitionError(Exception):
@@ -17,11 +17,7 @@ class ParameterInfo(BaseModel):
         type (str): The expected data type (e.g., 'string', 'number').
     """
 
-    model_config = ConfigDict(extra="forbid", strict=True)
-    type: Literal["number", "integer", "string", "boolean", "array",
-                  "object", "null"]
-    description: str = ""
-    enum: List[Any] | None = None
+    type: str
 
 
 class FunctionDefinition(BaseModel):
@@ -36,8 +32,7 @@ class FunctionDefinition(BaseModel):
         returns (ParameterInfo): The expected return type of the function.
     """
 
-    model_config = ConfigDict(extra="forbid", strict=True)
-    name: str = Field(min_length=1)
+    name: str
     description: str
     parameters: Dict[str, ParameterInfo]
     returns: ParameterInfo
@@ -119,26 +114,4 @@ def get_function_definitions(
     names = [f.name for f in validated_functions]
     if len(names) != len(set(names)):
         raise FunctionDefinitionError("Duplicate function names")
-    for function in validated_functions:
-        for parameter in function.parameters.values():
-            supported = {"string", "number", "integer", "boolean"}
-            if parameter.type not in supported:
-                raise FunctionDefinitionError(
-                    f"Unsupported argument type: {parameter.type}"
-                )
-            if parameter.enum == []:
-                raise FunctionDefinitionError("Enum cannot be empty")
-            expected = {"string": str, "number": float,
-                        "integer": int, "boolean": bool}[parameter.type]
-            if parameter.enum is not None:
-                try:
-                    for value in parameter.enum:
-                        TypeAdapter(expected).validate_python(
-                            value, strict=True
-                        )
-                        json.dumps(value, allow_nan=False)
-                except (ValidationError, ValueError) as error:
-                    raise FunctionDefinitionError(
-                        "Enum values must match the declared type"
-                    ) from error
     return validated_functions
