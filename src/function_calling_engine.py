@@ -1,5 +1,6 @@
 """Select functions and extract arguments using the LLM and typed decoding."""
 import json
+import string
 from typing import Any
 
 from src.constrained_decoder import (
@@ -77,16 +78,23 @@ class FunctionCallingEngine:
         return function
 
     @staticmethod
-    def _build_parameter_prompt(prompt: Prompt, function: FunctionDefinition,
-                                parameter_name: str,
-                                parameter_type: str) -> str:
-        """Describe one argument without rules tied to parameter names."""
+    def _function_context(function: FunctionDefinition) -> str:
+        """Describe the function using only the supplied definition."""
         arguments = {name: info.model_dump()
                      for name, info in function.parameters.items()}
         return (
             f"Function: {function.name}: {function.description}\n"
             f"Arguments: {json.dumps(arguments)}\n"
-            f"Request: {prompt.prompt}\n"
+        )
+
+    def _build_parameter_prompt(self, prompt: Prompt,
+                                function: FunctionDefinition,
+                                parameter_name: str,
+                                parameter_type: str) -> str:
+        """Describe one argument without rules tied to parameter names."""
+        return (
+            self._function_context(function)
+            + f"Request: {prompt.prompt}\n"
             f'What is the value of argument "{parameter_name}" '
             f"({parameter_type})?\n"
             "Return only the original input value, not the function result. "
@@ -143,32 +151,62 @@ class FunctionCallingEngine:
                 previous += ", "
             previous += json.dumps(name) + ": "
             if info.type == "string":
-                previous += '"'
-            if info.type == "string":
-                mode = self._decoder.select_from_candidates(
-                    message + "\nChoose how to obtain this argument. "
-                    "copy: its exact value is literal text in the request. "
-                    "derive: construct the value from the request's meaning, "
-                    "such as an implied expression or symbol. "
-                    "Return only copy or derive, not the argument value.",
-                    ["copy", "derive"],
-                    previous_tokens='{"representation": "',
-                    terminators=('"',),
+                parameters[name] = self._generate_string_parameter(
+                    prompt, function, name, previous,
                 )
-                if mode == "copy":
-                    literal = self._decoder.select_from_candidates(
-                        message, self._literal_candidates(prompt.prompt),
-                        previous_tokens=previous[:-1],
-                        terminators=(",", "}", "\n"), max_tokens=128,
-                    )
-                    parameters[name] = json.loads(literal)
-                    continue
-                message += (
-                    "\nDerive this input value from the request. "
-                    "Use the notation required by its role, rather than "
-                    "listing examples or computing the function's result."
+            else:
+                parameters[name] = self._generate_parameter_value(
+                    message, previous, name, info.type,
                 )
-            parameters[name] = self._generate_parameter_value(
-                message, previous, name, info.type,
-            )
         return parameters
+
+    def _generate_string_parameter(self, prompt: Prompt,
+                                   function: FunctionDefinition,
+                                   name: str, previous: str) -> str:
+        """Separate literal text, matching expressions and named symbols."""
+        message = (
+            self._function_context(function)
+            + f"User request: {prompt.prompt}\n"
+            f'Classify the required value of argument "{name}".\n'
+            "literal: input text, copied exactly from the request.\n"
+            "expression: a matching rule that must be written as a "
+            "regular expression.\n"
+            "symbol: a character described by its name.\n"
+            "Return only literal, expression or symbol."
+        )
+        kind = self._decoder.select_from_candidates(
+            message, ["literal", "expression", "symbol"],
+            previous_tokens='{"kind": "', terminators=('"',),
+        )
+        if kind != "literal":
+            instruction = (
+                "Write the regular expression for this matching rule. "
+                "Use regex syntax, not a list of matching text."
+                if kind == "expression" else
+                "Write the actual character, not its name."
+            )
+            return self._decoder.generate_string(
+                message + "\n" + instruction
+                + f'\nReturn JSON containing only argument "{name}".',
+                "{" + json.dumps(name) + ': "',
+            )
+
+        message = self._build_parameter_prompt(
+            prompt, function, name, "string",
+        )
+        literal = self._decoder.select_from_candidates(
+            message, self._literal_candidates(prompt.prompt),
+            previous_tokens=previous, terminators=(",", "}", "\n"),
+            max_tokens=128,
+        )
+        # Preserve the extracted text or let the model choose punctuation.
+        candidates = [literal] + [json.dumps(char)
+                                  for char in string.punctuation + " "]
+        value = self._decoder.select_from_candidates(
+            message + "\nIf this argument is punctuation requested by name, "
+            "return the actual character rather than the spelling of its "
+            "name.", candidates, previous_tokens=previous,
+            terminators=(",", "}", "\n"), max_tokens=128,
+        )
+        decoded: str = json.loads(value)
+        return decoded
